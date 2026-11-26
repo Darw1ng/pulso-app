@@ -1,0 +1,73 @@
+apply plugin: 'com.android.application'
+
+// Firma de release. La llave NO vive en el repo: se lee de un keystore.properties fuera de él
+// (PULSO_KEYSTORE_PROPERTIES, o ~/.sitirt/pulso-app/keystore.properties). Sin ese archivo, el
+// release sale SIN firmar en vez de fallar: así un clon limpio o un CI todavía compilan.
+def rutaLlave = System.getenv("PULSO_KEYSTORE_PROPERTIES") ?: "${System.getProperty('user.home')}/.sitirt/pulso-app/keystore.properties"
+def llave = new Properties()
+def hayLlave = file(rutaLlave).exists()
+if (hayLlave) { file(rutaLlave).withInputStream { llave.load(it) } }
+
+android {
+    namespace = "mx.sitirt.pulso"
+    signingConfigs {
+        release {
+            if (hayLlave) {
+                storeFile file(llave['storeFile'])
+                storePassword llave['storePassword']
+                keyAlias llave['keyAlias']
+                keyPassword llave['keyPassword']
+            }
+        }
+    }
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "mx.sitirt.pulso"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            if (hayLlave) { signingConfig signingConfigs.release }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

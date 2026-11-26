@@ -1,0 +1,143 @@
+name: iPhone → TestFlight
+
+# Firma la app de iPhone de Pulso para doctores (doctores/ios) y la sube a App Store Connect; ahí
+# aparece en TestFlight. Se corre a mano (Actions › iPhone → TestFlight › Run workflow) o con
+# `gh workflow run ios-testflight.yml`. Mismo montaje que la app de Yo Controlo.
+#
+# Secretos (Settings › Secrets and variables › Actions):
+#   APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8 (llave de API de App Store Connect, rol Admin).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión visible (vacío = la del proyecto, hoy 1.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+env:
+  PULSO_URL_PANEL: ${{ vars.PULSO_URL_PANEL || 'https://pulso-sitirt.pages.dev' }}
+
+jobs:
+  subir:
+    name: Firmar y subir a App Store Connect
+    # macOS 26 trae Xcode 26 (SDK de iOS 26): App Store Connect sólo acepta builds hechos con él.
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      # CFBundleVersion: tiene que crecer en cada subida. El número de corrida de este workflow
+      # empieza en 1 y siempre crece.
+      PULSO_BUILD: ${{ github.run_number }}
+      PULSO_VERSION: ${{ inputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: doctores
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: doctores/package-lock.json
+
+      - run: xcodebuild -version && xcrun --sdk iphoneos --show-sdk-version
+      - run: npm ci
+      - run: npm test
+
+      # Copia www/ y escribe capacitor.config.json (con server.url) dentro del proyecto iOS.
+      - run: npx cap sync ios
+
+      - name: La app apunta al Pulso esperado
+        run: |
+          node -e '
+            const c = require("./ios/App/App/capacitor.config.json");
+            const { resolverUrlPanel, urlDeInicio } = require("./url-panel.cjs");
+            const origen = resolverUrlPanel(process.env.PULSO_URL_PANEL);
+            const esperado = urlDeInicio(origen);
+            const host = new URL(origen).host;
+            const ok = c.appId === "mx.sitirt.pulso" && c.appName === "Pulso" &&
+              c.server.url === esperado && c.server.cleartext === false &&
+              JSON.stringify(c.server.allowNavigation) === JSON.stringify([host]) &&
+              c.ios && c.ios.webContentsDebuggingEnabled === false;
+            console.log(JSON.stringify({ server: c.server, ios: c.ios }, null, 2));
+            if (!ok) { console.error("::error::capacitor.config.json no es el esperado"); process.exit(1); }
+          '
+
+      - name: Están los cuatro secretos de Apple
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          for v in TEAM KEY_ID ISSUER KEY; do
+            [ -n "${!v}" ] || { echo "::error::falta un secreto de Apple ($v)"; exit 1; }
+          done
+
+      - name: Archivar firmado y subir a App Store Connect
+        working-directory: doctores/ios/App
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          set -o pipefail
+          umask 077
+          KEY_PATH="$RUNNER_TEMP/AuthKey_$KEY_ID.p8"
+          trap 'rm -f "$KEY_PATH"' EXIT
+          printf '%s' "$KEY" > "$KEY_PATH"
+          AUTH=(-allowProvisioningUpdates
+                -authenticationKeyPath "$KEY_PATH"
+                -authenticationKeyID "$KEY_ID"
+                -authenticationKeyIssuerID "$ISSUER")
+          VERSION=()
+          if [ -n "$PULSO_VERSION" ]; then VERSION=(MARKETING_VERSION="$PULSO_VERSION"); fi
+
+          xcodebuild archive \
+            -project App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Pulso.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$PULSO_BUILD" "${VERSION[@]}" \
+            "${AUTH[@]}" | tail -n 60
+
+          app="$RUNNER_TEMP/Pulso.xcarchive/Products/Applications/App.app"
+          v() { /usr/libexec/PlistBuddy -c "Print :$1" "$app/Info.plist" 2>/dev/null; }
+          printf 'id=%s nombre=%s versión=%s build=%s\n' \
+            "$(v CFBundleIdentifier)" "$(v CFBundleDisplayName)" \
+            "$(v CFBundleShortVersionString)" "$(v CFBundleVersion)"
+          [ "$(v CFBundleIdentifier)" = mx.sitirt.pulso ] || { echo "::error::bundle id inesperado"; exit 1; }
+          [ "$(v CFBundleVersion)" = "$PULSO_BUILD" ] || { echo "::error::CFBundleVersion no es $PULSO_BUILD"; exit 1; }
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Pulso.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            "${AUTH[@]}"
+
+          echo "::notice::Listo: Pulso $(v CFBundleShortVersionString) ($PULSO_BUILD) se subió a App Store Connect. Aparece en TestFlight en 5 a 30 minutos."

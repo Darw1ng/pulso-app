@@ -1,0 +1,27 @@
+{
+  "name": "@pulso/app-doctores",
+  "version": "0.1.0",
+  "private": true,
+  "description": "App de Pulso para doctores y personal del consultorio (Capacitor): un WebView que abre el panel de producción.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "sync": "cap sync android",
+    "sync:ios": "cap sync ios",
+    "iconos": "python scripts/generar_iconos.py",
+    "test": "node --test \"test/*.test.mjs\"",
+    "apk:debug": "cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/ios": "8.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "typescript": "5.9.3"
+  }
+}
