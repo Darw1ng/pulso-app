@@ -64,5 +64,20 @@
 	<string>UIStatusBarStyleLightContent</string>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Entrar con Google (27-nov-2026): el SDK de Google regresa a la app por este esquema,
+	     que es el ID del cliente de iOS al revés (proyecto de Google Cloud pulso-510319). -->
+	<key>GIDClientID</key>
+	<string>308322181241-lfffbkvvfb5v3f6ftqlnfjujtivcpp3l.apps.googleusercontent.com</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.308322181241-lfffbkvvfb5v3f6ftqlnfjujtivcpp3l</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
