@@ -55,6 +55,14 @@ const config: CapacitorConfig = {
       insetsHandling: 'native',
       style: 'LIGHT',
     },
+    // Entrar con Apple o Google (26-nov-2026, @capgo/capacitor-social-login). El front lo
+    // llama por el puente (`frontend/src/lib/cuentaNativa.ts` en Pulso); quien valida el
+    // token es el backend. Solo se empaquetan los dos que se usan: el SDK de Facebook NO
+    // entra (rastreo ajeno y una declaración de privacidad más en la tienda).
+    SocialLogin: {
+      providers: { google: true, apple: true, facebook: false, twitter: false },
+      logLevel: 1,
+    },
   },
 };
 
